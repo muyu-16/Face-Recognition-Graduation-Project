@@ -200,8 +200,14 @@ def render_database_tab(cfg: Dict[str, object], db: FaceDatabase) -> None:
         target = st.selectbox("选择要删除的人员", db.names(), key="del_target")
         confirm = st.checkbox("我确认删除该人员的全部特征与图片", key="del_confirm")
         if st.button("删除该人员", type="primary", disabled=(not confirm or not target)):
-            st.success(f"已删除『{target}』") if db.delete_person(target) else st.error("删除失败：未找到")
-            st.rerun()
+            try:
+                if db.delete_person(target):
+                    st.success(f"已删除『{target}』")
+                    st.rerun()
+                else:
+                    st.error("删除失败：未找到")
+            except Exception as err:
+                st.error(f"删除失败：{err}")
     with col_ren:
         st.markdown("#### ✏️ 重命名")
         old_name = st.selectbox("选择人员", db.names(), key="ren_old")

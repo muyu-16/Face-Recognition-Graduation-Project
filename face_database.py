@@ -122,12 +122,18 @@ class FaceDatabase:
         safe = sanitize_name(name)
         if safe not in self.people:
             return False
+        backup, old_updated = dict(self.people), self.updated_at
         del self.people[safe]
+        self._sync_counts()
+        try:
+            self.save()                   # 先落盘：失败则原样回滚，照片一张不删
+        except Exception:
+            self.people, self.updated_at = backup, old_updated
+            self._sync_counts()
+            raise
         person_dir = self.face_dir / safe
         if person_dir.exists():
             shutil.rmtree(person_dir, ignore_errors=True)
-        self._sync_counts()
-        self.save()
         return True
     def rename_person(self, old_name: str, new_name: str) -> bool:
         old_safe, new_safe = sanitize_name(old_name), sanitize_name(new_name)
