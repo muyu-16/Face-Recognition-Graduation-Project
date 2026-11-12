@@ -143,17 +143,34 @@ class FaceDatabase:
             raise ValueError(f"『{new_safe}』已存在，无法重名。")
         if new_safe == old_safe:      # 改成同一个名字：幂等成功，不动内存/图片/人脸库
             return True
-        record = self.people.pop(old_safe)
         old_dir, new_dir = self.face_dir / old_safe, self.face_dir / new_safe
-        if old_dir.exists():
-            if new_dir.exists():
-                shutil.rmtree(new_dir, ignore_errors=True)
-            old_dir.rename(new_dir)
-            record["image_paths"] = [str(new_dir / Path(p).name) if p else ""
-                                     for p in record.get("image_paths", [])]
-        record["updated_at"] = _now()
-        self.people[new_safe] = record
-        self.save()
+        if new_dir.exists():          # 目标目录已存在（含不在 people 里的孤儿目录）：安全失败，绝不删/覆盖/改名
+            raise FileExistsError(f"目标照片目录『{new_safe}』已存在，无法改名；请先手动处理该目录后重试。")
+        # 任何副作用之前先做快照：people 全量+顺序、记录字段、库时间戳
+        backup_people, backup_updated = dict(self.people), self.updated_at
+        record = self.people[old_safe]
+        backup_paths, backup_rec_updated = list(record.get("image_paths", [])), record.get("updated_at")
+        moved = False
+        try:
+            del self.people[old_safe]
+            if old_dir.exists():
+                old_dir.rename(new_dir)
+                moved = True
+            record["image_paths"] = [str(new_dir / Path(p).name) if p else "" for p in backup_paths]
+            record["updated_at"] = _now()
+            self.people[new_safe] = record
+            self.save()
+        except Exception:
+            record["image_paths"], record["updated_at"] = backup_paths, backup_rec_updated
+            self.people, self.updated_at = backup_people, backup_updated
+            if moved and new_dir.exists() and not old_dir.exists():
+                try:
+                    new_dir.rename(old_dir)
+                except Exception as rollback_err:
+                    self.last_error = (f"未完全恢复：照片目录现为『{new_safe}』，应恢复为『{old_safe}』"
+                                       f"（{self.face_dir}）。人脸库仍是旧名『{old_safe}』，请手动把该目录"
+                                       f"重命名回『{old_safe}』后重试。回滚失败原因：{rollback_err}")
+            raise
         return True
     @property
     def embedding_dim(self) -> Optional[int]:
