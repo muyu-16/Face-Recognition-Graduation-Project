@@ -1,6 +1,5 @@
 """face_detector.py —— MTCNN 人脸检测 + 关键点对齐 + 裁剪，并提供共用的图像格式工具。"""
 from __future__ import annotations
-import math
 import os
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Union
@@ -13,6 +12,37 @@ DEFAULT_IMAGE_SIZE, DEFAULT_MARGIN, DEFAULT_MIN_FACE_SIZE = 160, 20, 40
 _CJK_FONTS = (r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\simhei.ttf",
               r"C:\Windows\Fonts\simsun.ttc", "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
               "/System/Library/Fonts/PingFang.ttc")
+# ArcFace 标准 5 点参考坐标（112x112），按其布局做相似变换即可消除旋转/缩放/平移差异
+_ALIGN_REF_112 = np.array([
+    [30.2946, 51.6963],   # 左眼
+    [65.5318, 51.5014],   # 右眼
+    [48.0252, 71.7366],   # 鼻尖
+    [33.5493, 92.3655],   # 左嘴角
+    [62.7299, 92.2041],   # 右嘴角
+], dtype=np.float64)
+def _similarity_transform(src, dst):
+    """最小二乘求 2D 相似变换（旋转+等比缩放+平移），返回 2x3 矩阵：src -> dst。"""
+    src = np.asarray(src, dtype=np.float64).reshape(-1, 2)
+    dst = np.asarray(dst, dtype=np.float64).reshape(-1, 2)
+    n = src.shape[0]
+    A = np.zeros((2 * n, 4)); b = np.zeros(2 * n)
+    for i in range(n):
+        sx, sy = src[i]; dx, dy = dst[i]
+        A[2*i]     = [sx, -sy, 1.0, 0.0]
+        A[2*i+1]   = [sy,  sx, 0.0, 1.0]
+        b[2*i]     = dx; b[2*i+1] = dy
+    a, bb, tx, ty = np.linalg.lstsq(A, b, rcond=None)[0]
+    return np.array([[a, -bb, tx], [bb, a, ty]], dtype=np.float64)
+def _align_by_landmarks(pil, landmarks, size):
+    """按 5 点相似变换把整图重采样到 size×size（PIL 需要逆映射，故对 M 求逆）。"""
+    ref = _ALIGN_REF_112 * (size / 112.0)
+    M = _similarity_transform(np.asarray(landmarks[:5], dtype=np.float64), ref)
+    inv = np.linalg.inv(np.vstack([M, [0.0, 0.0, 1.0]]))
+    a, b, c = inv[0, 0], inv[0, 1], inv[0, 2]
+    d, e, f = inv[1, 0], inv[1, 1], inv[1, 2]
+    aligned = pil.transform((size, size), Image.AFFINE, (a, b, c, d, e, f),
+                            resample=Image.BILINEAR, fillcolor=(0, 0, 0))
+    return np.asarray(aligned, dtype=np.uint8)
 def to_rgb_array(arr: np.ndarray) -> np.ndarray:
     arr = np.asarray(arr)
     if arr.ndim == 2:
@@ -78,33 +108,30 @@ class FaceDetector:
     def crop(self, image: ImageLike, face: Face, image_size: Optional[int] = None,
              margin: Optional[int] = None) -> np.ndarray:
         size = int(image_size or self.image_size)
+        pil = to_rgb_pil(image)
+        # 首选：5 点齐全时用相似变换对齐（同时消除旋转、缩放、平移差异）
+        if self.align and face.landmarks is not None and len(face.landmarks) >= 5:
+            pts = np.asarray(face.landmarks[:5], dtype=np.float64)
+            if np.all(np.isfinite(pts)):
+                try:
+                    return _align_by_landmarks(pil, pts, size)
+                except np.linalg.LinAlgError:   # 关键点退化（共线）时退回 box 裁剪
+                    pass
+        # 退化路径：关键点不足或不可用，按 box 外扩后裁正方形
         pad = int(self.margin if margin is None else margin)
-        pil, box = to_rgb_pil(image), np.asarray(face.box, dtype=np.float32)
-        if self.align and face.landmarks is not None and len(face.landmarks) >= 2:
-            (lx, ly), (rx, ry) = face.landmarks[0], face.landmarks[1]
-            angle = math.degrees(math.atan2(float(ry - ly), float(rx - lx)))
-            if abs(angle) >= 0.5:          # 小于 0.5 度不值得旋转
-                cx0, cy0 = pil.width / 2.0, pil.height / 2.0
-                pil = pil.rotate(angle, resample=Image.BILINEAR, center=(cx0, cy0),
-                                 fillcolor=(0, 0, 0))
-                bx, by = (box[0] + box[2]) / 2.0 - cx0, (box[1] + box[3]) / 2.0 - cy0
-                t = math.radians(angle)
-                nx, ny = math.cos(t) * bx + math.sin(t) * by, -math.sin(t) * bx + math.cos(t) * by
-                hw, hh = (box[2] - box[0]) / 2.0, (box[3] - box[1]) / 2.0
-                box = self._clip([cx0 + nx - hw, cy0 + ny - hh, cx0 + nx + hw, cy0 + ny + hh],
-                                 pil.width, pil.height)
+        box = np.asarray(face.box, dtype=np.float32)
         cx, cy = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
         side = max(4.0, max(float(box[2] - box[0]), float(box[3] - box[1])) + 2.0 * pad)
-        crop = pil.crop((int(round(cx - side / 2)), int(round(cy - side / 2)),
-                         int(round(cx + side / 2)), int(round(cy + side / 2))))
-        w, h = crop.size
+        crop_img = pil.crop((int(round(cx - side / 2)), int(round(cy - side / 2)),
+                             int(round(cx + side / 2)), int(round(cy + side / 2))))
+        w, h = crop_img.size
         if w != h:                          # 黑边补齐成正方形，避免形变
             canvas = Image.new("RGB", (max(w, h),) * 2, (0, 0, 0))
-            canvas.paste(crop, ((max(w, h) - w) // 2, (max(w, h) - h) // 2))
-            crop = canvas
-        if crop.size != (size, size):       # 3) 缩放到模型输入尺寸
-            crop = crop.resize((size, size), resample=Image.BILINEAR)
-        return np.asarray(crop, dtype=np.uint8)
+            canvas.paste(crop_img, ((max(w, h) - w) // 2, (max(w, h) - h) // 2))
+            crop_img = canvas
+        if crop_img.size != (size, size):   # 3) 缩放到模型输入尺寸
+            crop_img = crop_img.resize((size, size), resample=Image.BILINEAR)
+        return np.asarray(crop_img, dtype=np.uint8)
     def detect_and_crop(self, image: ImageLike, max_faces: Optional[int] = None):
         faces = self.detect(image)
         if max_faces is not None:
