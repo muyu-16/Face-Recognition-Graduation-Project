@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# 人脸库与注册图片属于运行时数据，不建议提交到仓库
+face_db.pkl
+face_db.bak.pkl
+face_db.pkl.tmp
+*.corrupt-*.pkl
+registered_faces/
+
+# 自检 / 调试产物
+.selftest*/
+detect_preview.png
+.tmp_netcheck/
+.tmptest/
+torchinductor_*/
+
+
+# 预训练权重缓存（feature_extractor.py 固定把 TORCH_HOME 指向项目内 .cache/torch）
+.cache/
+
+# 精简前的数据备份（含隐私，绝不入库）
+face_db.*.pkl
+registered_faces_bak_*.zip
+
+# 工作区元数据（含本地路径与调试记录）与临时测试库
+.workbuddy/
+dbtest_*/
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 启动脚本调试输出
+*.launch_*.txt
+.launch_*.txt
