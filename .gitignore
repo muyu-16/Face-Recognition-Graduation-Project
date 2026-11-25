@@ -40,3 +40,4 @@ Thumbs.db
 # 启动脚本调试输出
 *.launch_*.txt
 .launch_*.txt
+.alma-snapshots
