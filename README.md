@@ -4,7 +4,7 @@
 >
 > 技术路线：**MTCNN 检测与对齐 → 预训练骨干提特征 → 余弦相似度比对 → 阈值判定（含陌生人拒识）→ Streamlit 界面**
 
-项目地址：<https://gitee.com/muyu1213/face_demo>
+项目地址：<https://github.com/muyu-16/Face-Recognition-Graduation-Project>
 
 ---
 
@@ -108,7 +108,7 @@ python -m streamlit run app.py
 | `similarity.py` | 余弦相似度、1:N 检索、陌生人判定、阈值统计 |
 | `requirements.txt` | 依赖清单 |
 | `操作日志.md` | 完整工作史（分阶段记录，含决策依据与验证结论） |
-| `交接文档.md` | 面向接手者的项目交接说明（背景、进度、遗留问题、下一步方案） |
+| `交接文档.md` | 项目交接说明（概况、实测数据、实现要点、已知边界、开发约定、红线） |
 | `README.md` | 本文件 |
 
 运行时生成（已在 `.gitignore`，不提交仓库）：
@@ -171,12 +171,14 @@ python -m streamlit run app.py
 
 ---
 
-## 七、从 Gitee 获取与更新
+## 七、获取与更新
 
 ```bash
-git clone https://gitee.com/muyu1213/face_demo.git
-cd face_demo
+git clone https://github.com/muyu-16/Face-Recognition-Graduation-Project.git
+cd Face-Recognition-Graduation-Project
 start.bat            # Windows 一键启动；依赖有变化会自动补装
 ```
 
 更新：`git pull` 后重新运行 `start.bat`。
+
+> 仓库只托管代码与文档。人脸库、注册照片、模型权重缓存均被 `.gitignore` 排除，clone 下来是干净的空库，需要自己注册后才会生成。
